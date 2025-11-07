@@ -1,15 +1,21 @@
 "use client"
 
-import APIKeyManager from "@/frontend/components/APIKeyForm"
+import Settings from "@/frontend/components/Settings"
 import Chat from "@/frontend/components/Chat"
 import { v4 as uuidv4 } from "uuid"
 import { useAPIKeyStore } from "../stores/APIKeyStore"
 import { useModelStore } from "../stores/ModelStore"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
+import { useConvexAuth } from "convex/react"
+import { useSessionStore } from "../stores/sessionStore"
 
 export default function Home() {
   const [isHydrated, setIsHydrated] = useState(false)
-  const [threadId] = useState(() => uuidv4())
+  const { isAuthenticated } = useConvexAuth()
+  const { getOrCreateSessionId } = useSessionStore()
+
+  // Generate a stable UUID for the new chat session.
+  const conversationId = useMemo(() => uuidv4(), []);
   const hasRequiredKeys = useAPIKeyStore((state) => state.hasRequiredKeys())
 
   useEffect(() => {
@@ -30,8 +36,13 @@ export default function Home() {
       setIsHydrated(true)
     }, 1000)
 
+    // Ensure guest users have a session ID when they land on the home page.
+    if (!isAuthenticated) {
+      getOrCreateSessionId()
+    }
+
     return () => clearTimeout(timeout)
-  }, [])
+  }, [isAuthenticated, getOrCreateSessionId])
 
   if (!isHydrated) {
     return (
@@ -47,10 +58,11 @@ export default function Home() {
   if (!hasRequiredKeys) {
     return (
       <div className="flex flex-col items-center justify-center w-full h-full max-w-3xl pt-10 pb-44 mx-auto">
-        <APIKeyManager />
+        <Settings />
       </div>
     )
   }
 
-  return <Chat threadId={threadId} initialMessages={[]} />
+  // The Chat component now handles all message loading internally using the persistent reactivity pattern
+  return <Chat threadId={conversationId} />
 }

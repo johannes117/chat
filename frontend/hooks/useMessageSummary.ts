@@ -1,51 +1,58 @@
-import { useCompletion } from "@ai-sdk/react"
+import { useMutation } from "convex/react"
+import { api } from "@/convex/_generated/api"
 import { useAPIKeyStore } from "@/frontend/stores/APIKeyStore"
 import { toast } from "sonner"
-import { createMessageSummary, updateThread } from "@/frontend/storage/queries"
-import { triggerUpdate } from "./useLiveQuery"
-
-interface MessageSummaryPayload {
-  title: string
-  isTitle?: boolean
-  messageId: string
-  threadId: string
-}
+import { useConvexAuth } from "convex/react"
+import type { Id } from "@/convex/_generated/dataModel";
 
 export const useMessageSummary = () => {
   const getKey = useAPIKeyStore((state) => state.getKey)
   const hasUserKey = useAPIKeyStore((state) => state.hasUserKey)
+  const { isAuthenticated } = useConvexAuth();
 
-  const { complete, isLoading } = useCompletion({
-    api: "/api/completion",
-    // Only send user's Google API key if they have one, let server handle host key fallback
-    ...(hasUserKey("google") && {
-      headers: { "X-Google-API-Key": getKey("google")! },
-    }),
-    onResponse: async (response) => {
-      try {
-        const payload: MessageSummaryPayload = await response.json()
+  const generateTitleMutation = useMutation(api.messages.generateTitleForMessage)
 
-        if (response.ok) {
-          const { title, isTitle, messageId, threadId } = payload
-
-          if (isTitle) {
-            await updateThread(threadId, title)
-            await createMessageSummary(threadId, messageId, title)
-          } else {
-            await createMessageSummary(threadId, messageId, title)
-          }
-          triggerUpdate()
-        } else {
-          toast.error("Failed to generate a summary for the message")
-        }
-      } catch (error) {
-        console.error(error)
+  const complete = async (
+    prompt: string,
+    options?: {
+      body?: {
+        isTitle?: boolean
+        messageId: string
+        conversationId: string
+        convexMessageId?: Id<"messages">
+        convexConversationId?: Id<"conversations">
       }
-    },
-  })
+    }
+  ) => {
+    const { isTitle = false, messageId, conversationId, convexMessageId, convexConversationId } = options?.body || {}
+
+    if (!messageId || !conversationId) {
+      console.error("MessageId and ConversationId are required for message summary.")
+      toast.error("Failed to generate summary: Missing IDs.")
+      return
+    }
+
+    try {
+      if (isAuthenticated && convexMessageId && convexConversationId) {
+        const userGoogleApiKey = hasUserKey("google") ? (getKey("google") || undefined) : undefined
+
+        await generateTitleMutation({
+          prompt,
+          isTitle,
+          messageId: convexMessageId,
+          conversationId: convexConversationId,
+          userGoogleApiKey,
+        })
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to generate title";
+      console.error("Error generating title:", errorMessage);
+      toast.error(errorMessage);
+    }
+  }
 
   return {
     complete,
-    isLoading,
+    isLoading: false,
   }
 }

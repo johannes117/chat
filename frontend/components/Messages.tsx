@@ -1,52 +1,73 @@
 import { memo } from "react"
 import PreviewMessage from "./Message"
 import type { UIMessage } from "ai"
-import type { UseChatHelpers } from "@ai-sdk/react"
 import equal from "fast-deep-equal"
 import MessageLoading from "@/components/ui/message-loading"
-import Error from "./Error"
+import type { Id } from "@/convex/_generated/dataModel"
+import type { UIMessageData } from "@/convex/types"
 
 function PureMessages({
-  threadId,
   messages,
-  status,
-  setMessages,
-  reload,
-  error,
-  stop,
+  isStreaming,
+  convexConversationId,
 }: {
-  threadId: string
-  messages: UIMessage[]
-  setMessages: UseChatHelpers["setMessages"]
-  reload: UseChatHelpers["reload"]
-  status: UseChatHelpers["status"]
-  error: UseChatHelpers["error"]
-  stop: UseChatHelpers["stop"]
+  messages: UIMessage[];
+  isStreaming: boolean;
+  convexConversationId: Id<"conversations"> | null;
 }) {
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  
+  // Early return if no messages to avoid unnecessary computation
+  if (!lastMessage) {
+    return <section className="flex flex-col"></section>;
+  }
+  
+  // Determine if the assistant is generating a response
+  const assistantIsGenerating =
+    lastMessage.role === "assistant" &&
+    (lastMessage.data as UIMessageData)?.isComplete === false;
+
+  // Determine if we should show the "typing dots"
+  // Show only if the assistant is generating AND has not yet produced any content (text, tools, or reasoning)
+  const showLoadingDots =
+    assistantIsGenerating &&
+    !lastMessage.content &&
+    (!lastMessage.parts || lastMessage.parts.length === 0) &&
+    !(lastMessage as any).reasoning; // Also check our new temporary field
+
   return (
-    <section className="flex flex-col space-y-12">
-      {messages.map((message, index) => (
-        <PreviewMessage
-          key={message.id}
-          threadId={threadId}
-          message={message}
-          isStreaming={status === "streaming" && messages.length - 1 === index}
-          setMessages={setMessages}
-          reload={reload}
-          stop={stop}
-        />
-      ))}
-      {status === "submitted" && <MessageLoading />}
-      {error && <Error message={error.message} />}
+    <section className="flex flex-col">
+      {messages.map((message, index) => {
+        const prevMessage = messages[index - 1];
+
+        let marginTopClass = 'mt-12'; // Default large gap
+
+        if (index > 0 && message.role === 'assistant' && prevMessage?.role === 'assistant') {
+          // If this assistant message follows another assistant message (e.g., text -> tool_call -> text), reduce the gap.
+          marginTopClass = 'mt-2';
+        } else if (index === 0) {
+          marginTopClass = ''; // No margin for the first message
+        }
+
+        return (
+          <div key={message.id} className={marginTopClass}>
+            <PreviewMessage message={message} messages={messages} convexConversationId={convexConversationId} />
+          </div>
+        );
+      })}
+      {showLoadingDots && (
+        <div className="mt-2">
+          <MessageLoading />
+        </div>
+      )}
     </section>
   )
 }
 
 const Messages = memo(PureMessages, (prevProps, nextProps) => {
-  if (prevProps.status !== nextProps.status) return false
-  if (prevProps.error !== nextProps.error) return false
-  if (prevProps.messages.length !== nextProps.messages.length) return false
+  if (prevProps.isStreaming !== nextProps.isStreaming) return false
   if (!equal(prevProps.messages, nextProps.messages)) return false
+  if (prevProps.convexConversationId !== nextProps.convexConversationId) return false
   return true
 })
 
